@@ -11,6 +11,9 @@
 
 static free_block *free_list = NULL;
 
+/* Extra credit: Next Fit cursor */
+static free_block *next_fit_cursor = NULL;
+
 /* Helper Functions */
 
 static size_t align_up(size_t size) {
@@ -126,26 +129,56 @@ void *tumalloc(size_t size) {
 
     size_t wanted = align_up(size);
 
-    /* First Fit search */
-    free_block *curr = free_list;
+    /* If no free list yet, request directly from OS */
+    if (free_list == NULL) {
+        free_block *new_block = request_from_os(wanted);
+        if (new_block == NULL) {
+            return NULL;
+        }
+
+        header *h = (header *)new_block;
+        h->size = wanted;
+        h->magic = MAGIC;
+
+        return header_to_ptr(h);
+    }
+
+    /* If cursor is not set, start at head */
+    if (next_fit_cursor == NULL) {
+        next_fit_cursor = free_list;
+    }
+
+    free_block *start = next_fit_cursor;
+    free_block *curr = start;
     free_block *prev = NULL;
 
-    while (curr != NULL) {
+    /* Find the previous node of start so removal works correctly */
+    if (curr != free_list) {
+        prev = free_list;
+        while (prev != NULL && prev->next != curr) {
+            prev = prev->next;
+        }
+    }
+
+    do {
         if (curr->size >= wanted) {
             split_block_if_possible(curr, wanted);
 
-            /* If split happened, curr->next is the remainder block. */
+            /* If split happened, curr->next is the remainder block */
             free_block *remainder = curr->next;
 
             remove_block_from_free_list(curr, prev);
 
-            /* Restore remainder into list if split happened. */
+            /* Restore remainder into free list if split happened */
             if (remainder != NULL) {
                 if (prev == NULL) {
                     free_list = remainder;
                 } else {
                     prev->next = remainder;
                 }
+                next_fit_cursor = remainder;
+            } else {
+                next_fit_cursor = free_list;
             }
 
             header *h = (header *)curr;
@@ -157,7 +190,14 @@ void *tumalloc(size_t size) {
 
         prev = curr;
         curr = curr->next;
-    }
+
+        /* Wrap around to the front */
+        if (curr == NULL) {
+            curr = free_list;
+            prev = NULL;
+        }
+
+    } while (curr != NULL && curr != start);
 
     /* No fit found, ask OS for more heap */
     free_block *new_block = request_from_os(wanted);
@@ -168,6 +208,9 @@ void *tumalloc(size_t size) {
     header *h = (header *)new_block;
     h->size = wanted;
     h->magic = MAGIC;
+
+    /* Safe reset of cursor */
+    next_fit_cursor = free_list;
 
     return header_to_ptr(h);
 }
@@ -253,4 +296,11 @@ void tufree(void *ptr) {
 
     insert_free_block_sorted(block);
     coalesce_free_list();
+
+    /*
+     * Safety reset:
+     * after inserting/coalescing, reset the cursor to a known valid node
+     * so it never points to a merged-away block.
+     */
+    next_fit_cursor = free_list;
 }
