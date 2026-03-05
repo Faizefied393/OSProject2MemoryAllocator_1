@@ -191,8 +191,3 @@ This project is intended as a learning exercise in:
 ## Author
 
 Faiz Tariq
-
-## License
-
-This project is for educational/coursework use unless otherwise specified.
-
