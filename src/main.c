@@ -45,7 +45,7 @@ int main(void) {
         return 1;
     }
 
-    /* check old data survived */
+    /* Make sure the old values are still there after resizing */
     printf("bigger[0] = %d (should be 111)\n", bigger[0]);
     printf("bigger[9] = %d (should be 999)\n", bigger[9]);
 
@@ -88,17 +88,17 @@ int main(void) {
     tufree(x);
     tufree(z);
 
-    printf("Freed x, y, z (adjacent frees should coalesce if implemented correctly)\n");
+    printf("Freed x, y, and z (neighboring free blocks should merge if coalescing works)\n");
 
     printf("\n=== double-free protection test ===\n");
     tufree(c);
     printf("First free of c done.\n");
-    tufree(c);   /* should trigger your protection message */
+    tufree(c);   /* This should trigger the double-free protection */
     printf("Second free of c attempted.\n");
 
     printf("\n=== invalid free handling test ===\n");
     int stack_value = 123;
-    tufree(&stack_value);   /* invalid: not heap memory from tumalloc */
+    tufree(&stack_value);   /* Invalid free: this pointer was not returned by tumalloc */
     printf("Invalid free attempted on stack variable.\n");
 
     printf("\n=== cleanup ===\n");
