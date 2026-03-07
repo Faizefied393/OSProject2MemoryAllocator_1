@@ -4,21 +4,21 @@
 #include <stddef.h>
 
 /*
- * Metadata for allocated blocks.
- * This sits immediately before the user-visible pointer.
+ * Header used for blocks that have been allocated.
+ * It is stored right before the pointer returned to the user.
  */
 typedef struct header {
-    size_t size;   // size of user payload
-    int magic;     // used to validate free/realloc
+    size_t size;   // size of the usable memory block
+    int magic;     // helps check for invalid free or realloc calls
 } header;
 
 /*
- * Metadata for free blocks.
- * Free blocks form the free list.
+ * Header used for blocks that are currently free.
+ * These blocks are linked together in the free list.
  */
 typedef struct free_block {
-    size_t size;               // size of user payload
-    struct free_block *next;   // next block in free list
+    size_t size;               // size of the usable memory block
+    struct free_block *next;   // points to the next free block
 } free_block;
 
 void *tumalloc(size_t size);
