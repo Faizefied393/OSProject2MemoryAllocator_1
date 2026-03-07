@@ -11,10 +11,10 @@
 
 static free_block *free_list = NULL;
 
-/* Extra credit: Next Fit cursor */
+/* Extra credit: keeps track of where next-fit should continue searching */
 static free_block *next_fit_cursor = NULL;
 
-/* Helper Functions */
+/* Helper functions */
 
 static size_t align_up(size_t size) {
     return (size + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1);
@@ -29,8 +29,8 @@ static void *header_to_ptr(header *h) {
 }
 
 /*
- * Request a new block from the OS.
- * Total bytes requested = metadata + aligned payload.
+ * Ask the OS for a new chunk of memory.
+ * We request enough space for the header plus the aligned payload.
  */
 static free_block *request_from_os(size_t aligned_payload_size) {
     size_t total_size = align_up(sizeof(header) + aligned_payload_size);
@@ -47,8 +47,8 @@ static free_block *request_from_os(size_t aligned_payload_size) {
 }
 
 /*
- * Insert a free block into the free list in address order.
- * This makes coalescing easy and reliable.
+ * Put a block back into the free list in memory-address order.
+ * This helps later when we want to merge neighboring blocks.
  */
 static void insert_free_block_sorted(free_block *block) {
     if (block == NULL) {
@@ -71,7 +71,7 @@ static void insert_free_block_sorted(free_block *block) {
 }
 
 /*
- * Merge adjacent free blocks.
+ * Walk through the free list and merge blocks that are right next to each other.
  */
 static void coalesce_free_list(void) {
     free_block *curr = free_list;
@@ -89,7 +89,7 @@ static void coalesce_free_list(void) {
 }
 
 /*
- * Remove a specific block from the free list.
+ * Remove one specific block from the free list.
  */
 static void remove_block_from_free_list(free_block *block, free_block *prev) {
     if (prev == NULL) {
@@ -101,7 +101,7 @@ static void remove_block_from_free_list(free_block *block, free_block *prev) {
 }
 
 /*
- * Split a block if there is enough space left to form another valid free block.
+ * Split a block if it is big enough to leave behind a useful free block.
  */
 static void split_block_if_possible(free_block *block, size_t wanted_size) {
     size_t min_remainder = sizeof(header) + ALIGNMENT;
@@ -120,7 +120,7 @@ static void split_block_if_possible(free_block *block, size_t wanted_size) {
     block->next = remainder;
 }
 
-/* Required Functions */
+/* Required functions */
 
 void *tumalloc(size_t size) {
     if (size == 0) {
@@ -129,7 +129,7 @@ void *tumalloc(size_t size) {
 
     size_t wanted = align_up(size);
 
-    /* If no free list yet, request directly from OS */
+    /* If the free list is empty, just get a new block from the OS */
     if (free_list == NULL) {
         free_block *new_block = request_from_os(wanted);
         if (new_block == NULL) {
@@ -143,7 +143,7 @@ void *tumalloc(size_t size) {
         return header_to_ptr(h);
     }
 
-    /* If cursor is not set, start at head */
+    /* If next-fit has no starting point yet, begin at the front */
     if (next_fit_cursor == NULL) {
         next_fit_cursor = free_list;
     }
@@ -152,7 +152,7 @@ void *tumalloc(size_t size) {
     free_block *curr = start;
     free_block *prev = NULL;
 
-    /* Find the previous node of start so removal works correctly */
+    /* Find the node before start so removal works correctly */
     if (curr != free_list) {
         prev = free_list;
         while (prev != NULL && prev->next != curr) {
@@ -164,12 +164,12 @@ void *tumalloc(size_t size) {
         if (curr->size >= wanted) {
             split_block_if_possible(curr, wanted);
 
-            /* If split happened, curr->next is the remainder block */
+            /* If the block was split, curr->next now points to the leftover piece */
             free_block *remainder = curr->next;
 
             remove_block_from_free_list(curr, prev);
 
-            /* Restore remainder into free list if split happened */
+            /* Put the leftover piece back into the list if there is one */
             if (remainder != NULL) {
                 if (prev == NULL) {
                     free_list = remainder;
@@ -191,7 +191,7 @@ void *tumalloc(size_t size) {
         prev = curr;
         curr = curr->next;
 
-        /* Wrap around to the front */
+        /* If we hit the end, wrap back around to the front */
         if (curr == NULL) {
             curr = free_list;
             prev = NULL;
@@ -199,7 +199,7 @@ void *tumalloc(size_t size) {
 
     } while (curr != NULL && curr != start);
 
-    /* No fit found, ask OS for more heap */
+    /* No free block was large enough, so request more memory */
     free_block *new_block = request_from_os(wanted);
     if (new_block == NULL) {
         return NULL;
@@ -209,7 +209,7 @@ void *tumalloc(size_t size) {
     h->size = wanted;
     h->magic = MAGIC;
 
-    /* Safe reset of cursor */
+    /* Reset cursor safely */
     next_fit_cursor = free_list;
 
     return header_to_ptr(h);
@@ -220,7 +220,7 @@ void *tucalloc(size_t num, size_t size) {
         return NULL;
     }
 
-    /* overflow protection */
+    /* Prevent overflow when multiplying */
     if (num > SIZE_MAX / size) {
         return NULL;
     }
@@ -253,12 +253,12 @@ void *turealloc(void *ptr, size_t new_size) {
 
     size_t wanted = align_up(new_size);
 
-    /* If current block is already big enough, keep it */
+    /* If the current block is already big enough, keep using it */
     if (old_header->size >= wanted) {
         return ptr;
     }
 
-    /* Otherwise allocate a new block */
+    /* Otherwise, get a new block and move the old data over */
     void *new_ptr = tumalloc(wanted);
     if (new_ptr == NULL) {
         return NULL;
@@ -266,7 +266,7 @@ void *turealloc(void *ptr, size_t new_size) {
 
     memcpy(new_ptr, ptr, old_header->size);
 
-    /* Optional but nice: zero the newly added area */
+    /* Zero out the extra space in the bigger block */
     if (wanted > old_header->size) {
         memset((char *)new_ptr + old_header->size, 0, wanted - old_header->size);
     }
@@ -282,7 +282,7 @@ void tufree(void *ptr) {
 
     header *h = ptr_to_header(ptr);
 
-    /* detect invalid free / double free */
+    /* Catch invalid frees or double frees */
     if (h->magic != MAGIC) {
         fprintf(stderr, "tufree: invalid free or double free detected\n");
         return;
@@ -298,9 +298,8 @@ void tufree(void *ptr) {
     coalesce_free_list();
 
     /*
-     * Safety reset:
-     * after inserting/coalescing, reset the cursor to a known valid node
-     * so it never points to a merged-away block.
+     * Reset next-fit to a safe location after freeing/coalescing,
+     * so it does not point to a block that may have been merged away.
      */
     next_fit_cursor = free_list;
 }
